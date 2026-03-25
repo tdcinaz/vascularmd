@@ -102,19 +102,19 @@ class Editor:
 		scene.append_to_caption('\n\n')
 
 		# Check boxes
-		self.checkboxes = {'full' : checkbox(text= "Data  ", bind=self.update_visibility_state, checked=True, mode = "full")}
-		self.update_buttons = {'full' : button(text = "Apply", bind=self.update_graph, mode = 'full')}
+		self.checkboxes = {'full' : checkbox(text= "Data  ", bind=lambda evt: self.update_visibility_state(self.checkboxes['full']), checked=True, mode = "full")}
+		self.update_buttons = {'full' : button(text = "Apply", bind=lambda evt: self.update_graph(self.update_buttons['full']), mode = 'full')}
 		scene.append_to_caption('\t\t\t\t\t\t\t')
-		self.checkboxes['topo'] = checkbox(text= "Topology  ", bind=self.update_visibility_state, checked = False, mode = "topo")
-		self.update_buttons['topo'] = button(text = "Apply", bind=self.update_graph, mode = 'topo')
+		self.checkboxes['topo'] = checkbox(text= "Topology  ", bind=lambda evt: self.update_visibility_state(self.checkboxes['topo']), checked = False, mode = "topo")
+		self.update_buttons['topo'] = button(text = "Apply", bind=lambda evt: self.update_graph(self.update_buttons['topo']), mode = 'topo')
 		self.crop_button = button(text = " Crop ", bind=self.crop_network, mode = 'topo', activated = False)
 		scene.append_to_caption('\t\t\t\t\t')
-		self.checkboxes['model'] = checkbox(text= "Model  ", bind=self.update_visibility_state, mode = "model", checked = False)
-		self.update_buttons['model'] = button(text = "Apply", bind=self.update_graph, mode = 'model')
+		self.checkboxes['model'] = checkbox(text= "Model  ", bind=lambda evt: self.update_visibility_state(self.checkboxes['model']), mode = "model", checked = False)
+		self.update_buttons['model'] = button(text = "Apply", bind=lambda evt: self.update_graph(self.update_buttons['model']), mode = 'model')
 		self.extension_button = button(text="Extend", bind=self.manage_extensions)
 		self.extension_state = False
 		scene.append_to_caption('\t\t\t\t\t')
-		self.checkboxes['mesh'] = checkbox(text= "Mesh  " , bind=self.update_visibility_state, mode="mesh", checked = False)
+		self.checkboxes['mesh'] = checkbox(text= "Mesh  " , bind=lambda evt: self.update_visibility_state(self.checkboxes['mesh']), mode="mesh", checked = False)
 
 		self.surface_button = button(text="Surface", bind=self.mesh_surface)
 		self.deform_mesh_button = button(text="Deform", bind=self.deform_mesh)
@@ -344,6 +344,52 @@ class Editor:
 	def do_nothing(self):
 		pass
 
+	def _widget_attr(self, widget_or_event, attr, default=None):
+
+		"""Return a widget attribute from either a widget or callback event wrapper."""
+
+		widget = getattr(widget_or_event, "owner", widget_or_event)
+		if hasattr(widget, attr):
+			return getattr(widget, attr)
+		if hasattr(widget_or_event, attr):
+			return getattr(widget_or_event, attr)
+		return default
+
+	def _resolve_mode(self, widget_or_event):
+
+		mode = self._widget_attr(widget_or_event, "mode")
+		if mode is not None:
+			return mode
+
+		widget = getattr(widget_or_event, "owner", widget_or_event)
+		for m, checkbox in self.checkboxes.items():
+			if widget is checkbox:
+				return m
+		for m, button in self.update_buttons.items():
+			if widget is button:
+				return m
+		for m, slider in self.node_size_sliders.items():
+			if widget is slider:
+				return m
+
+		return None
+
+	def _resolve_parameter(self, widget_or_event):
+
+		parameter = self._widget_attr(widget_or_event, "parameter")
+		if parameter is not None:
+			return parameter
+
+		widget = getattr(widget_or_event, "owner", widget_or_event)
+		for p, winput in self.parameters_winput.items():
+			if widget is winput:
+				return p
+		for p, checkbox in self.smooth_checkboxes.items():
+			if widget is checkbox:
+				return p
+
+		return None
+
 	def node_color(self, n, mode):
 		""" Returns the node color, depending on the mode"""
 
@@ -496,10 +542,17 @@ class Editor:
 	def update_visibility_state(self, b):
 		
 		""" Show / hide network representation when the corresponding checkbox is checked / unchecked. """
-		mode = b.mode
+		mode = self._resolve_mode(b)
+		checked = self._widget_attr(b, "checked", False)
+
+		if mode is None:
+			self.output_message("Cannot detect selected representation mode from UI event.", "error")
+			return
+
 		if self.modified[mode] and not b.checked:
 			# Do nothing as the changes must be validated 
-			b.checked = True
+			widget = getattr(b, "owner", b)
+			widget.checked = True
 			self.output_message("Please apply the modifications by clicking 'Apply' before leaving this representation mode.","error")
 
 		else:
@@ -510,7 +563,7 @@ class Editor:
 			else:
 				categories = []
 
-			if b.checked:
+			if checked:
 				self.show(mode, categories)
 
 				if mode == "model":
@@ -944,31 +997,37 @@ class Editor:
 		
 	def update_visibility_angle(self, checkbox):
 
+		mode = self._resolve_mode(checkbox)
+		checked = self._widget_attr(checkbox, "checked", False)
 
-		if checkbox.checked: # Create angles labels
-			angles = self.tree.angle(None, mode=checkbox.mode)
+		if mode is None:
+			self.output_message("Cannot detect angle display mode from UI event.", "error")
+			return
 
-			if "angles" not in self.elements[checkbox.mode].keys():
-				self.elements[checkbox.mode]["angles"] = []
+		if checked: # Create angles labels
+			angles = self.tree.angle(None, mode=mode)
+
+			if "angles" not in self.elements[mode].keys():
+				self.elements[mode]["angles"] = []
 
 				for a in angles:
 					L = label(pos=vec(a[1][0], a[1][1], a[1][2]), text=str(a[2])+ "°", box = False, locked = False)
-					self.elements[checkbox.mode]["angles"].append(L)
+					self.elements[mode]["angles"].append(L)
 
 			else:
 				for i in range(len(angles)):
 					a = angles[i]
-					if i < len(self.elements[checkbox.mode]["angles"]):
-						self.elements[checkbox.mode]["angles"][i].visible = True
-						self.elements[checkbox.mode]["angles"][i].pos = vec(a[1][0], a[1][1], a[1][2])
-						self.elements[checkbox.mode]["angles"][i].text = str(a[2])+ "°"
+					if i < len(self.elements[mode]["angles"]):
+						self.elements[mode]["angles"][i].visible = True
+						self.elements[mode]["angles"][i].pos = vec(a[1][0], a[1][1], a[1][2])
+						self.elements[mode]["angles"][i].text = str(a[2])+ "°"
 					else:
 
 						L = label(pos=vec(a[1][0], a[1][1], a[1][2]), text=str(a[2])+ "°", box = False, locked = False)
-						self.elements[checkbox.mode]["angles"].append(L)
+						self.elements[mode]["angles"].append(L)
 
 		else: # Hide angle labels
-			for elt in self.elements[checkbox.mode]["angles"]:
+			for elt in self.elements[mode]["angles"]:
 				elt.visible = False
 
 
@@ -1125,10 +1184,12 @@ class Editor:
 		"""
 
 		if not disabled:
+			active_mode = []
 			for m in mode:
 				self.checkboxes[m].disabled = disabled
-				if not self.checkboxes[m].checked:
-					mode.remove(m)
+				if self.checkboxes[m].checked:
+					active_mode.append(m)
+			mode = active_mode
 	
 		for m in mode:
 			
@@ -1672,7 +1733,11 @@ class Editor:
 		""" Update the modified elements in the tree object by modifying the graphs"""
 
 		self.disable(True, checkboxes = True)
-		mode = b.mode # The mode of the button is the representation it controls
+		mode = self._resolve_mode(b) # The mode of the button is the representation it controls
+		if mode is None:
+			self.output_message("Cannot detect graph mode from UI event.", "error")
+			self.disable(False, checkboxes = True)
+			return
 		self.modified[mode] = False
 
 		self.unselect("node", mode)
@@ -2833,12 +2898,19 @@ class Editor:
 		""" Update the user choice for the smoothing parameter (radius or spatial) to work with """
 
 
-		if b.checked:
+		parameter = self._resolve_parameter(b)
+		checked = self._widget_attr(b, "checked", False)
+
+		if parameter is None:
+			self.output_message("Cannot detect smoothing parameter from UI event.", "error")
+			return
+
+		if checked:
 
 			ids = self.selected_edge.id
 			lbd = self.tree.get_model_graph().edges[ids]['spline'].get_lbd()
 
-			if b.parameter == "spatial":
+			if parameter == "spatial":
 				if len(lbd) == 0:
 					self.output_message("There are no models associated with this spline.", mode = "warning")
 					self.smooth_checkboxes["spatial"].checked = False
@@ -2861,7 +2933,7 @@ class Editor:
 					self.lbdr = lbd[1]
 					self.lbdr_text.text = str(round(self.lbdr, 2))
 		else:
-			if b.parameter == "spatial":
+			if parameter == "spatial":
 				self.lbds_text.text = ""
 			else:
 				self.lbdr_text.text = ""
@@ -2878,15 +2950,21 @@ class Editor:
 
 		""" Update user choice of meshing parameters """
 
-		if b.parameter == "N":
+		parameter = self._resolve_parameter(b)
+
+		if parameter is None:
+			self.output_message("Cannot detect meshing parameter from UI event.", "error")
+			return
+
+		if parameter == "N":
 			self.N = int(self.parameters_winput['N'].text)
 			self.output_message("Number of cross section nodes set to " + str(self.N) + ".")
 			
-		elif b.parameter == "d":
+		elif parameter == "d":
 			self.d = float(self.parameters_winput['d'].text)
 			self.output_message("Density of cross section set to " + str(self.d) + ".")
 
-		elif b.parameter == "a" or b.parameter == "b" or b.parameter == "c":
+		elif parameter == "a" or parameter == "b" or parameter == "c":
 
 			tot =  abs(float(self.parameters_winput['a'].text)) +  abs(float(self.parameters_winput['b'].text)) +  abs(float(self.parameters_winput['c'].text))
 
@@ -2895,23 +2973,23 @@ class Editor:
 			self.c = abs(float(self.parameters_winput['c'].text)) / tot  
 			self.output_message("Relative size of the different internal layers set to " + str(round(self.a, 2)) + ", "+ str(round(self.b, 2)) + ", "+ str(round(self.c, 2)) + ".")
 
-		elif b.parameter == "num_a":
+		elif parameter == "num_a":
 
 			self.num_a = abs(int(self.parameters_winput['num_a'].text))
 			self.output_message("Number of layers in the boundary set to " + str(self.num_a) + ".")
 
 
-		elif b.parameter == "num_b":
+		elif parameter == "num_b":
 
 			self.num_b = abs(int(self.parameters_winput['num_b'].text))
 			self.output_message("Number of layers in the intermediate part set to " + str(self.num_b) + ".")
 
-		elif b.parameter == "max_coords":
+		elif parameter == "max_coords":
 
 			self.max_coords = abs(float(self.parameters_winput["max_coords"].text))
 			self.output_message("The maximum distance of the model to data points coordinates was set to " + str(self.max_coords) + " x radius.")
 
-		elif b.parameter == "max_radius":
+		elif parameter == "max_radius":
 
 			self.max_radius = abs(float(self.parameters_winput['max_radius'].text))
 			self.output_message("The maximum distance of the model to the data points radius was set to " + str(self.max_radius) + " x radius.")
@@ -3108,7 +3186,10 @@ class Editor:
 	def update_node_size(self, b):
 
 		""" Change node size using slider """
-		mode = b.mode
+		mode = self._resolve_mode(b)
+		if mode is None:
+			self.output_message("Cannot detect node size mode from UI event.", "error")
+			return
 
 		def set_node_size(elt, args):
 			elt.radius = args[0]

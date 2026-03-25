@@ -754,6 +754,9 @@ class Nfurcation:
 		tspl = []
 		key_pts = self._SP[::-1] + self._AP
 
+		# Compute mean radius at the geometric center from all end-section radii
+		center_radius = np.mean([self._endsec[i][0][-1] for i in range(len(self._endsec))])
+
 		for i in range(len(key_pts)):
 
 			i2 = i+1
@@ -781,7 +784,13 @@ class Nfurcation:
 			spl.approximation(np.vstack((p0, pint0,  pint1, p1)), [1,1,1,1], np.vstack((p0, tg0, tg1, p1)), False, n = 4, radius_model=False, criterion= "None")
 
 			P = spl.get_control_points()
-			P = np.hstack((P, np.zeros((4,1))))
+
+			# Interpolate radius from endpoint radius to center radius
+			r0 = self._endsec[i][0][-1]  # radius at the end section
+			r1 = center_radius            # radius at the geometric center
+			n_cp = P.shape[0]
+			radii = np.linspace(r0, r1, n_cp).reshape(-1, 1)
+			P = np.hstack((P, radii))
 
 			tspl.append(Spline(P))
 
@@ -907,6 +916,18 @@ class Nfurcation:
 	#########  MESHING METHODS  #########
 	#####################################
 
+
+	def mesh_surface_initial(self):
+		""" Returns the surface mesh of the bifurcation before any
+		relaxation or apex smoothing has been applied. """
+		if not hasattr(self, '_crsec_initial') or self._crsec_initial is None:
+			return self.mesh_surface()
+		# Temporarily swap crsec, build mesh, then restore
+		saved = self._crsec
+		self._crsec = self._crsec_initial
+		mesh = self.mesh_surface()
+		self._crsec = saved
+		return mesh
 
 	def mesh_surface(self):
 
@@ -1039,6 +1060,10 @@ class Nfurcation:
 		self._crsec = [end_crsec, bif_crsec, nds, connect_index]
 		self._N = N
 		self._d = d
+
+		# Snapshot the initial cross-sections before any post-processing
+		import copy
+		self._crsec_initial = copy.deepcopy(self._crsec)
 
 		self.relaxation(3)
 
@@ -1249,7 +1274,7 @@ class Nfurcation:
 			pts = self._crsec
 
 		mesh = self.mesh_surface()
-		mesh = mesh.smooth(n_iter, boundary_smoothing=False, relaxation_factor=0.8) # Laplacian smooth
+		mesh = mesh.smooth(n_iter=n_iter, boundary_smoothing=False, relaxation_factor=0.8) # Laplacian smooth
 		self.mesh_to_crsec(mesh)
 
 

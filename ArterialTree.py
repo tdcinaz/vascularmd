@@ -1700,7 +1700,7 @@ class ArterialTree:
 				order_crsec = [0] + np.arange(1,len(end_crsec[j])).tolist()[::-1]
 				self._crsec_graph.nodes[ids[j]]['crsec'] = end_crsec[j][order_crsec]
 				self._crsec_graph.edges[(ids[j], n)]['crsec'] = nds[j][:,order_crsec]
-				self._crsec_graph.edges[(ids[j], n)]['connect'] = connect_index[j][order_crsec]
+				self._crsec_graph.edges[(ids[j], n)]['connect'] = ind[j][order_crsec]
 			else:
 
 				self._crsec_graph.nodes[ids[j]]['crsec'] = end_crsec[j]

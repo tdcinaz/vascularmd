@@ -1,7 +1,16 @@
+import warnings
+
+warnings.filterwarnings(
+	"ignore",
+	message=r"pkg_resources is deprecated as an API.*",
+	category=UserWarning,
+)
+
 from ArterialTree import ArterialTree
 from Simulation import Simulation
 from Editor import Editor
 from Nfurcation import Nfurcation
+from vpython import rate
 
 import numpy as np
 
@@ -9,6 +18,7 @@ import numpy as np
 # Import centerline data to create an ArterialTree object
 # Import from swc file
 centerline_filename = "Data/example_centerline_ICA.swc"
+#centerline_filename = "Data/limited_tree.swc"
 tree = ArterialTree("patient1", "Aneurisk", centerline_filename)
 
 # Uncomment to import from txt model file (ideal models)
@@ -75,6 +85,11 @@ simu.write_velocity_boundary_condition_file([0.2])
 
 # Open the user interface for editing, modeling, meshing
 e = Editor(tree, 1500, 600)
+
+# Keep VPython event processing active so widget callbacks (checkboxes/buttons)
+# continue to fire while the GUI is open.
+while True:
+	rate(60)
 
 
 ##### SINGLE BIFURCATION EXAMPLE #####
