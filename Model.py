@@ -610,7 +610,12 @@ class Model:
 		t = [0.0]
 		for i in range(1, len(self._D)):
 			t.append(t[i-1] + np.linalg.norm(self._D[i] - self._D[i-1]))
-		t = [time / max(t) for time in t]
+		total_length = max(t)
+		if total_length <= np.finfo(float).eps:
+			if len(t) == 1:
+				return np.array(t)
+			return np.linspace(0.0, 1.0, len(t))
+		t = [time / total_length for time in t]
 
 		return np.array(t)
 

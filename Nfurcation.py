@@ -102,21 +102,34 @@ class Nfurcation:
 	def check_input_parameters(self):
 		""" Check that the constraints that link the apex point AP and the apical cross section are verified. 
 		Translate the sections if necessary."""
+		updated_apex_sections = False
 
-		for i in range(len(self._AP)): 
-			# Check the apical cross section position
-			for crsec in self._apexsec[i]:
+		for branch_index, branch_crsecs in enumerate(self._apexsec):
+			for local_index, crsec in enumerate(branch_crsecs):
 
-				vAP = self._AP[i] - crsec[0][:3] 
+				# Branch 0 uses AP0, the last branch uses the last AP, and any
+				# interior branch sections map to consecutive apex points.
+				ap_index = max(0, branch_index - 1) + local_index
+				if ap_index >= len(self._AP):
+					ap_index = len(self._AP) - 1
+
+				vAP = self._AP[ap_index] - crsec[0][:3]
 				vAPnorm = cross(crsec[1][:3], vAP)
 				vAPnorm = cross(vAPnorm,crsec[1][:3])
+				if norm(vAPnorm) <= 10**(-12):
+					continue
 				vAPnorm = vAPnorm / norm(vAPnorm)
 				
 				AP_estim = crsec[0][:3] + vAPnorm * crsec[0][3]
-				translate_vector = self._AP[i] - AP_estim
+				translate_vector = self._AP[ap_index] - AP_estim
 
-				if norm(translate_vector) > 0.0 : 
+				if norm(translate_vector) > 0.0:
 					crsec[0][:3] = crsec[0][:3] + translate_vector
+					updated_apex_sections = True
+
+		if updated_apex_sections:
+			self.__set_spl()
+			self.__set_tAP()
 
 
 	#####################################
@@ -1418,15 +1431,95 @@ class Nfurcation:
 	##############  UTILS  ##############
 	#####################################
 
+	def __point_inside_spline(self, pt, ind):
+
+		"""Return whether *pt* lies inside the tube defined by spline *ind*."""
+
+		t = self._spl[ind].project_point_to_centerline(pt)
+		pt2 = self._spl[ind].point(t, True)
+		return norm(pt - pt2[:-1]) <= pt2[-1] + 10**(-8)
+
+
+	def __point_inside_union(self, pt, spline_indices = None):
+
+		"""Return whether *pt* lies inside the union of the selected spline tubes."""
+
+		if spline_indices is None:
+			spline_indices = np.arange(0, len(self._spl)).tolist()
+
+		for ind in spline_indices:
+			if self.__point_inside_spline(pt, ind):
+				return True
+
+		return False
+
+
+	def __projection_to_union_surface(self, O, n, c0, c1, spline_indices = None):
+
+		"""Project a ray from *O* to the outer boundary of the union of spline tubes."""
+
+		n = n / norm(n)
+
+		if c1 < c0:
+			raise ValueError("We must have c1>c0.")
+
+		if spline_indices is None:
+			spline_indices = np.arange(0, len(self._spl)).tolist()
+
+		if not self.__point_inside_union(O, spline_indices):
+			return None
+
+		max_radius = max([sec[0][3] for sec in self._endsec])
+		step = max(max_radius / 50.0, 10**(-3))
+		search_max = c1
+		attempts = 0
+		inside_c = c0
+		outside_c = None
+
+		while outside_c is None and attempts < 8:
+
+			c = c0 + step
+			while c <= search_max + 10**(-12):
+				pt = O + c * n
+				if not self.__point_inside_union(pt, spline_indices):
+					inside_c = max(c0, c - step)
+					outside_c = c
+					break
+				c += step
+
+			if outside_c is None:
+				search_max *= 2.0
+				attempts += 1
+
+		if outside_c is None:
+			return O + search_max * n
+
+		while abs(inside_c - outside_c) > 10**(-3):
+
+			c = (inside_c + outside_c) / 2.0
+			pt = O + c * n
+
+			if self.__point_inside_union(pt, spline_indices):
+				inside_c = c
+			else:
+				outside_c = c
+
+		return O + ((inside_c + outside_c) / 2.0) * n
+
 
 	def send_to_surface(self, O, n, ind):
 
 		""" Sends a point to the surface defined by all shape splines according to direction n """
 
-		# Project to main ind
 		min_dist = 0
-		max_dist = self._endsec[0][0][3] * 2
-		
+		max_dist = max([sec[0][3] for sec in self._endsec]) * 2
+
+		all_indices = np.arange(0, len(self._spl)).tolist()
+		pt = self.__projection_to_union_surface(O, n, min_dist, max_dist, all_indices)
+		if pt is not None:
+			return pt
+
+		# Fallback for callers whose seed point is already outside the union.
 		pt = self.__projection(O, n, min_dist, max_dist, ind)
 
 		ind_list = np.arange(0, len(self._spl)).tolist()

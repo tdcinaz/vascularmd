@@ -17,7 +17,7 @@ import numpy as np
 
 # Import centerline data to create an ArterialTree object
 # Import from swc file
-centerline_filename = "Data/example_centerline_ICA.swc"
+centerline_filename = "Data/test_output.swc"
 #centerline_filename = "Data/limited_tree.swc"
 tree = ArterialTree("patient1", "Aneurisk", centerline_filename)
 

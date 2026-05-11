@@ -637,53 +637,61 @@ class ArterialTree:
 		combine = False
 		merge_next = False
 
-		# Get index of the in spline with max diameter for C0
-	
-		if len(splines) == 2: # The vessel with the bigger radius is used to set C0
-			r = 0
-			ind = 0
-			for i in range(len(splines)):
-				rad = splines[i].radius(max(tAP[i]))
-				if rad > r:
-					r = rad
-					ind = i
-		else:
+		# Build an order-invariant inlet spline from the common incoming branch.
+		inlet_data = np.vstack((
+			self._model_graph.nodes[e_in[0][0]]['coords'],
+			self._model_graph.edges[e_in[0]]['coords'],
+			self._model_graph.nodes[n]['coords'],
+		))
+		inlet_values = np.zeros((4,4))
+		inlet_constraint = [False] * 4
+		start_tangent = self._model_graph.nodes[e_in[0][0]].get('tangent')
+		if self._model_graph.nodes[e_in[0][0]]['type'] != "end":
+			inlet_values[0,:] = self._model_graph.nodes[e_in[0][0]]['coords']
+			inlet_constraint[0] = True
+			if start_tangent is not None:
+				inlet_values[1,:] = start_tangent
+				inlet_constraint[1] = True
 
-			min_t = 1
-			for i in range(len(AP)): # The vessel with the smallest tAP is used to set C0
-				t = splines[1].project_point_to_centerline(AP[i])
-				if t < min_t:
-					min_t = t
-					ind = i
+		inlet_spline_model = Spline()
+		inlet_spline_model.approximation(inlet_data, inlet_constraint, inlet_values, False, criterion = criterion, max_distance = max_distance)
 
-		t_ap = min(tAP[ind])
-		l_ap = splines[ind].time_to_length(t_ap)
+		cut_len = []
+		cut_len_min = []
+		for i in range(len(splines)):
+			t_ap = min(tAP[i])
+			rad = splines[i].radius(t_ap)
+			l_ap = splines[i].time_to_length(t_ap)
+			cut_len.append(l_ap - rad * LEN_IN)
+			cut_len_min.append(l_ap - rad * MIN_LEN_IN)
 
+		preferred_cut_len = min(cut_len)
+		minimum_cut_len = min(cut_len_min)
 
-		if l_ap - splines[ind].radius(t_ap)* MIN_LEN_IN > 0.2: # We can cut!
+		if minimum_cut_len > 0.2: # We can cut!
 
-			if l_ap - splines[ind].radius(t_ap)* LEN_IN > 0.2:
-				t_cut = splines[ind].length_to_time(l_ap - splines[ind].radius(t_ap)*LEN_IN)
+			if preferred_cut_len > 0.2:
+				t_cut = inlet_spline_model.length_to_time(preferred_cut_len)
 			else:
-				t_cut = splines[ind].length_to_time(l_ap - splines[ind].radius(t_ap)*MIN_LEN_IN)
+				t_cut = inlet_spline_model.length_to_time(minimum_cut_len)
 
 			if t_cut < 10**(-2):
 
-				pt_cut = splines[ind].point(t_cut)
-				spline_cut, tmp_spl = splines[ind].split_time(0.1)
+				pt_cut = inlet_spline_model.point(t_cut)
+				spline_cut, tmp_spl = inlet_spline_model.split_time(0.1)
 				new_t_cut = spline_cut.project_point_to_centerline(pt_cut)
 				spline_in, tmp_spl = spline_cut.split_time(new_t_cut)
 			else:
-				spline_in, tmp_spl = splines[ind].split_time(t_cut)
+				spline_in, tmp_spl = inlet_spline_model.split_time(t_cut)
 
-			model = splines[ind].get_model()
+			model = inlet_spline_model.get_model()
 			T = model[0].get_t()
 			thres = np.argmax(T>t_cut)
 			thres = thres - 1
 			data = self._model_graph.edges[e_in[0]]['coords']
 			D_in = data[:thres,:]
 
-			C0 = [splines[ind].point(t_cut, True), splines[ind].tangent(t_cut, True)]
+			C0 = [inlet_spline_model.point(t_cut, True), inlet_spline_model.tangent(t_cut, True)]
 
 		else: # Merge with LAST one to create trifurcation or combine (length criterion)
 			print("Combine!")
@@ -1321,26 +1329,41 @@ class ArterialTree:
 		l1 = tspl.time_to_length(tspl.project_point_to_centerline(C0_center))
 		tsep = tspl.length_to_time(l1 + margin)
 
-		# Find closest symetric node
-		sym_nodes = [0, self._N//4, self._N//2, self._N//4 * 3] 
-		tvec = tspl.project_point_to_centerline(sep1[0])
-		vec = sep1[0] - tspl.point(tvec)
-		vec = vec / norm(vec)
+		# Find the best cyclic alignment between both separation rings.
+		def alignment_score(offset):
 
-		min_a = 5.0
-		for j in range(len(sym_nodes)):
-			# Project to tspl to find vector
-			tsym = tspl.project_point_to_centerline(sep2[sym_nodes[j]])
-			sym = sep2[sym_nodes[j]] - tspl.point(tsym)
-				
-			# Transport  
-			vec_trans = tspl.transport_vector(vec, tvec, tsym)
-			a = angle(vec_trans, sym, axis = tspl.tangent(tsym), signed =True)
-			if abs(a) < abs(min_a):
-				min_a = a
-				min_ind = sym_nodes[j]
+			"""Return a global angular mismatch score for a cyclic separation-ring shift."""
 
-		connect_sep = np.hstack((np.arange(min_ind, self._N), np.arange(0, min_ind)))
+			total_abs_angle = 0.0
+			max_abs_angle = 0.0
+
+			for j in range(len(sep1)):
+				tvec = tspl.project_point_to_centerline(sep1[j])
+				vec = sep1[j] - tspl.point(tvec)
+				vec = vec / norm(vec)
+
+				tsym = tspl.project_point_to_centerline(sep2[(j + offset) % len(sep2)])
+				sym = sep2[(j + offset) % len(sep2)] - tspl.point(tsym)
+				vec_trans = tspl.transport_vector(vec, tvec, tsym)
+				a = angle(vec_trans, sym, axis = tspl.tangent(tsym), signed =True)
+
+				abs_angle = abs(a)
+				total_abs_angle += abs_angle
+				if abs_angle > max_abs_angle:
+					max_abs_angle = abs_angle
+
+			return total_abs_angle, max_abs_angle
+
+		best_score = None
+		min_ind = 0
+		for offset in range(len(sep2)):
+			score = alignment_score(offset)
+			if best_score is None or score < best_score:
+				best_score = score
+				min_ind = offset
+
+		ring_size = len(sep2)
+		connect_sep = np.hstack((np.arange(min_ind, ring_size), np.arange(0, min_ind)))
 			
 		# Number of cross sections
 		num = int(tspl.length() / (bif1.get_spl()[branch].radius(1.0) * self._d))

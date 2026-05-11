@@ -1252,10 +1252,17 @@ class Spline:
 
 			# Apex direction 
 			v = inter_pt2 - inter_pt1
-			v = v / norm(v)
-				
-			# Compute apex value
-			AP, tAP = self.intersection(spl, v, inter_t1, 1.0)
+			v_norm = norm(v)
+
+			if v_norm <= 10**(-12):
+				AP = (inter_pt1 + inter_pt2) / 2.0
+			else:
+				v = v / v_norm
+				ap1, tAP1 = self.intersection(spl, v, inter_t1, 1.0)
+				ap2, tAP2 = spl.intersection(self, -v, inter_t2, 1.0)
+				AP = (ap1 + ap2) / 2.0
+
+			tAP = [self.project_point_to_centerline(AP), spl.project_point_to_centerline(AP)]
 				
 	
 		else:
