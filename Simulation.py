@@ -169,10 +169,7 @@ FoamFile
 		"""
 		print("Writing mesh")
 		output_dir = self.output_dir + "/constant/polyMesh/"
-		try:
-			os.makedirs(output_dir)
-		except OSError as error:
-			print("Overwriting the current case folder.")
+		os.makedirs(output_dir, exist_ok=True)
 
 		volume = self.mesh
 		surfaces =  self.boundary_patches
@@ -196,6 +193,21 @@ FoamFile
 
 		def write_face(face_points):
 			return "%d(%s)\n" % (len(face_points), " ".join([str(p) for p in face_points]))
+
+		def oriented_face_point_ids(cell, face):
+			face_points = [np.array(face.GetPoints().GetPoint(i)) for i in range(face.GetNumberOfPoints())]
+			normal = np.zeros(3)
+			for i in range(len(face_points)):
+				p0 = face_points[i]
+				p1 = face_points[(i + 1) % len(face_points)]
+				normal[0] += (p0[1] - p1[1]) * (p0[2] + p1[2])
+				normal[1] += (p0[2] - p1[2]) * (p0[0] + p1[0])
+				normal[2] += (p0[0] - p1[0]) * (p0[1] + p1[1])
+
+			face_point_ids = [face.GetPointId(p) for p in range(face.GetNumberOfPoints())]
+			if np.dot(normal, get_midpoint(face) - get_midpoint(cell)) < 0:
+				face_point_ids.reverse()
+			return face_point_ids
 
 
 		boundary_names = [name for name in surfaces.keys()]
@@ -240,6 +252,7 @@ FoamFile
 			boundary_faces.append([])
 
 		internal_faces = []
+		seen_internal_faces = set()
 
 		volume.BuildLinks()
 		nc = volume.GetNumberOfCells()
@@ -249,36 +262,38 @@ FoamFile
 
 			cell = volume.GetCell(cell_id)
 			nf = cell.GetNumberOfFaces()
-			cell_internal_faces = {}
 			for face_id in range(nf):
 				face = cell.GetFace(face_id)
 				neighbour_cell_ids = vtk.vtkIdList()
-				face_point_ids = face.GetPointIds()
 				volume.GetCellNeighbors(cell_id, face.GetPointIds(), neighbour_cell_ids)
 				nn = neighbour_cell_ids.GetNumberOfIds()
+				face_point_ids = oriented_face_point_ids(cell, face)
 				if nn == 0:
 					# boundary
 					face_midpoint = get_midpoint(face)
 					boundary_id = boundary_id_array.GetValue(loc.FindClosestPoint(face_midpoint))
 					boundary_faces[boundary_id].append((
-						[face.GetPointId(p) for p in range(face.GetNumberOfPoints())],
+						face_point_ids,
 						cell_id))
 				elif nn == 1:
 					# internal
 					neighbour_cell_id = neighbour_cell_ids.GetId(0)
-					if cell_id < neighbour_cell_id:
-						cell_internal_faces[neighbour_cell_id] = (
-							[face.GetPointId(p) for p in range(face.GetNumberOfPoints())],
-							cell_id,
-							neighbour_cell_id)
+					owner_cell_id = min(cell_id, neighbour_cell_id)
+					neighbour_cell_id = max(cell_id, neighbour_cell_id)
+					if cell_id != owner_cell_id:
+						face_point_ids = list(reversed(face_point_ids))
+
+					face_points = tuple(face_point_ids)
+					face_key = tuple(sorted(face_points))
+					if face_key not in seen_internal_faces:
+						seen_internal_faces.add(face_key)
+						internal_faces.append((
+							list(face_points),
+							owner_cell_id,
+							neighbour_cell_id))
 				else:
 					print("ERROR: face associated with more than 2 cells")
 					exit(1)
-
-			ids = list(cell_internal_faces.keys())
-			ids.sort()
-			for f in ids:
-				internal_faces.append(cell_internal_faces[f])
 
 		for i in range(num_boundaries):
 			print(boundary_names[i] + ":", len(boundary_faces[i]),  "faces")
@@ -353,14 +368,15 @@ FoamFile
 		boundary_file.write("%d\n(\n" % num_boundaries)
 
 		for i in range(num_boundaries):
+			boundary_type = "wall" if boundary_names[i] == "wall" else "patch"
 			boundary_file.write(boundary_names[i] + 
 		"""
 		{
-			type patch;
+			type %s;
 			nFaces %d;
 			startFace %d;
 		}
-		""" % (len(boundary_faces[i]), start_face))
+		""" % (boundary_type, len(boundary_faces[i]), start_face))
 			start_face += len(boundary_faces[i])
 
 		boundary_file.write(")\n")
@@ -376,10 +392,7 @@ FoamFile
 		"""
 		print("Writing mesh")
 		output_dir = self.output_dir + "/constant/polyMesh/"
-		try:
-			os.makedirs(output_dir)
-		except OSError as error:
-			print("Overwriting the current case folder.")
+		os.makedirs(output_dir, exist_ok=True)
 
 		volume = self.mesh
 		surfaces =  self.boundary_patches
@@ -403,6 +416,21 @@ FoamFile
 
 		def write_face(face_points):
 			return "%d(%s)\n" % (len(face_points), " ".join([str(p) for p in face_points]))
+
+		def oriented_face_point_ids(cell, face):
+			face_points = [np.array(face.GetPoints().GetPoint(i)) for i in range(face.GetNumberOfPoints())]
+			normal = np.zeros(3)
+			for i in range(len(face_points)):
+				p0 = face_points[i]
+				p1 = face_points[(i + 1) % len(face_points)]
+				normal[0] += (p0[1] - p1[1]) * (p0[2] + p1[2])
+				normal[1] += (p0[2] - p1[2]) * (p0[0] + p1[0])
+				normal[2] += (p0[0] - p1[0]) * (p0[1] + p1[1])
+
+			face_point_ids = [face.GetPointId(p) for p in range(face.GetNumberOfPoints())]
+			if np.dot(normal, get_midpoint(face) - get_midpoint(cell)) < 0:
+				face_point_ids.reverse()
+			return face_point_ids
 
 
 		boundary_names = [name for name in surfaces.keys()]
@@ -508,6 +536,7 @@ FoamFile
 			boundary_faces.append(np.zeros((nb_boundary_faces[i], 5), dtype = int))
 			boundary_counter.append(0)
 		internal_counter = 0
+		seen_internal_faces = set()
 
 		volume.BuildLinks()
 		nc = volume.GetNumberOfCells()
@@ -518,36 +547,36 @@ FoamFile
 			
 			cell = volume.GetCell(cell_id)
 			nf = cell.GetNumberOfFaces()
-			cell_internal_faces = {}
 			for face_id in range(nf):
 				face = cell.GetFace(face_id)
 				neighbour_cell_ids = vtk.vtkIdList()
-				face_point_ids = face.GetPointIds()
 				volume.GetCellNeighbors(cell_id, face.GetPointIds(), neighbour_cell_ids)
 				nn = neighbour_cell_ids.GetNumberOfIds()
+				face_point_ids = oriented_face_point_ids(cell, face)
 				if nn == 0:
 					# boundary
 					face_midpoint = get_midpoint(face)
 					boundary_id = boundary_id_array.GetValue(loc.FindClosestPoint(face_midpoint))
-					boundary_faces[boundary_id][boundary_counter[boundary_id], :] = np.array([face.GetPointId(p) for p in range(face.GetNumberOfPoints())]+[cell_id]) #np.vstack((boundary_faces[boundary_id], np.array([face.GetPointId(p) for p in range(face.GetNumberOfPoints())]+[cell_id])))
+					boundary_faces[boundary_id][boundary_counter[boundary_id], :] = np.array(face_point_ids + [cell_id]) #np.vstack((boundary_faces[boundary_id], np.array([face.GetPointId(p) for p in range(face.GetNumberOfPoints())]+[cell_id])))
 					boundary_counter[boundary_id] +=1
 
 				elif nn == 1:
 					# internal
 					neighbour_cell_id = neighbour_cell_ids.GetId(0)
-					if cell_id < neighbour_cell_id:
-						cell_internal_faces[neighbour_cell_id] = np.array([face.GetPointId(p) for p in range(face.GetNumberOfPoints())] + [cell_id] + [neighbour_cell_id])
+					owner_cell_id = min(cell_id, neighbour_cell_id)
+					neighbour_cell_id = max(cell_id, neighbour_cell_id)
+					if cell_id != owner_cell_id:
+						face_point_ids = list(reversed(face_point_ids))
 
-						#internal_faces[neighbour_cell_id,:] =  #np.vstack((internal_faces, np.array([face.GetPointId(p) for p in range(face.GetNumberOfPoints())] + [cell_id] + [neighbour_cell_id])))
+					face_points = tuple(face_point_ids)
+					face_key = tuple(sorted(face_points))
+					if face_key not in seen_internal_faces:
+						seen_internal_faces.add(face_key)
+						internal_faces[internal_counter, :] = np.array(list(face_points) + [owner_cell_id] + [neighbour_cell_id])
+						internal_counter += 1
 				else:
 					print("ERROR: face associated with more than 2 cells")
 					exit(1)
-
-			ids = list(cell_internal_faces.keys())
-			ids.sort()
-			for f in ids:
-				internal_faces[internal_counter, :] = cell_internal_faces[f]
-				internal_counter += 1
 			
 
 			#internal_faces = internal_faces[internal_faces[:,5].argsort()]
@@ -612,14 +641,15 @@ FoamFile
 		boundary_file.write("%d\n(\n" % num_boundaries)
 
 		for i in range(num_boundaries):
+			boundary_type = "wall" if boundary_names[i] == "wall" else "patch"
 			boundary_file.write(boundary_names[i] + 
 		"""
 		{
-			type patch;
+			type %s;
 			nFaces %d;
 			startFace %d;
 		}
-		""" % (len(boundary_faces[i]), start_face))
+		""" % (boundary_type, len(boundary_faces[i]), start_face))
 			start_face += len(boundary_faces[i])
 
 		boundary_file.write(")\n")
@@ -634,10 +664,7 @@ FoamFile
 
 		boundary_names = [name for name in self.boundary_patches.keys()]
 
-		try:
-			os.makedirs(self.output_dir + "/0/")
-		except OSError as error:
-			print("Overwriting the current case folder.")
+		os.makedirs(self.output_dir + "/0/", exist_ok=True)
 
 		file = open(self.output_dir + "/0/" + "p", "w")
 		file.write(self.file_header())
@@ -677,10 +704,7 @@ FoamFile
 		"""
 
 		boundary_names = [name for name in self.boundary_patches.keys()]
-		try:
-			os.makedirs(self.output_dir + "/0/")
-		except OSError as error:
-			print("Overwriting the current case folder.")
+		os.makedirs(self.output_dir + "/0/", exist_ok=True)
 
 		file = open(self.output_dir + "/0/" + "U", "w")
 		file.write(self.file_header())
